@@ -50,10 +50,41 @@ const NOINDEX_OK = new Set(["mentions-legales.html", "confidentialite.html", "co
 // Pages légales : ni mot-clé ville en H1, ni indexation requises.
 const LEGAL = new Set(["mentions-legales.html", "confidentialite.html"])
 // Pages à portée NATIONALE assumée (linkable assets) : H1 sans ville, normal.
+//
+// Tout ce qui vit sous `conseils/` en fait partie par convention. Un guide du type
+// « attestation de ramonage » ou « branches du voisin » répond à une question qui ne
+// se pose pas différemment à Castres et à Liège : lui imposer la ville en H1
+// produirait un titre faux. Ce qui reste exigé sur ces pages : title unique et ≤ 65
+// caractères, description dans la zone utile, canonical sur le bon domaine, un seul
+// H1, un seul FAQPage, aucun lien cassé.
+//
+// Conséquence assumée : un article de conseils ne vise PAS la requête locale. Si un
+// jour on veut en faire une page locale, il faut la sortir de `conseils/`.
 const NATIONAL = new Set(["chiffres-elagage.html"])
+const estNational = (f) => NATIONAL.has(f) || f.startsWith("conseils/")
 
-// Les pages techniques Next (_not-found, _global-error…) ne sont pas du contenu.
-const htmlFiles = readdirSync(APP).filter((f) => f.endsWith(".html") && !f.startsWith("_"))
+// Parcours RÉCURSIF de .next/server/app.
+//
+// Défaut trouvé le 05/08/2026 sur le monorepo d'élagage, présent à l'identique ici :
+// ce linter ne lisait que la RACINE du dossier. Les articles de `/conseils/` — trois
+// par site — n'étaient contrôlés par rien : ni longueur de title, ni description, ni
+// H1, ni JSON-LD, ni lien cassé. Tout sous-dossier de routes est désormais parcouru.
+//
+// Les pages techniques Next (_not-found, _global-error…) ne sont pas du contenu, et
+// `[slug]` et consorts sont des gabarits, pas des pages rendues.
+function htmlRecursif(dir, prefixe = "") {
+  const out = []
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) {
+      if (e.name.startsWith("_") || e.name.startsWith("[")) continue
+      out.push(...htmlRecursif(join(dir, e.name), `${prefixe}${e.name}/`))
+    } else if (e.name.endsWith(".html") && !e.name.startsWith("_")) {
+      out.push(`${prefixe}${e.name}`)
+    }
+  }
+  return out
+}
+const htmlFiles = htmlRecursif(APP)
 const pages = []
 for (const f of htmlFiles) {
   const html = readFileSync(join(APP, f), "utf-8")
@@ -76,7 +107,7 @@ for (const [f, html] of pages) {
   const h1s = html.match(/<h1[\s>]/g) ?? []
   if (h1s.length !== 1) {
     err(f, `${h1s.length} balise(s) H1 — il en faut exactement 1`)
-  } else if (!LEGAL.has(f) && !NATIONAL.has(f)) {
+  } else if (!LEGAL.has(f) && !estNational(f)) {
     const h1 = (html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/)?.[1] ?? "").replace(/<[^>]+>/g, " ")
     if (cityName && !h1.toLowerCase().includes(cityName.toLowerCase())) {
       err(f, `H1 sans le nom de la ville (${cityName}) : « ${h1.replace(/\s+/g, " ").trim().slice(0, 70)} »`)
